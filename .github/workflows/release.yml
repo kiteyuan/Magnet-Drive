@@ -6,6 +6,9 @@ on:
       - "v*"
   workflow_dispatch:
 
+env:
+  ANDROID_NDK_VERSION: "27.3.13750724"
+
 jobs:
   publish-tauri:
     permissions:
@@ -74,16 +77,184 @@ jobs:
           tagName: v__VERSION__
           releaseName: "纸鸢下载 v__VERSION__"
           releaseBody: |
-            纸鸢下载桌面客户端（WebView 壳）。
+            纸鸢下载客户端（WebView 壳）。
 
             启动后加载：https://mybt.kiteyuan.info
 
             ## 安装包说明
             - **Windows**：`.msi` / `.exe`（NSIS）
-            - **macOS**：`.dmg` / `.app`（Apple Silicon 与 Intel 分别构建）
+            - **macOS**：`.dmg`（Apple Silicon 与 Intel 分别构建）
             - **Linux**：`.deb` / `.AppImage`
+            - **Android**：`.apk`（aarch64；侧载安装，未上架应用商店）
 
-            > 当前未配置应用商店上架与公证签名，macOS 首次打开可能需在「系统设置 → 隐私与安全性」中允许。
-          releaseDraft: true
+            > macOS 未公证时，首次打开可能需在「系统设置 → 隐私与安全性」中允许。
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+  publish-android:
+    name: Android APK
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK / platform / build-tools
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;${ANDROID_NDK_VERSION}"
+          echo "NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> "$GITHUB_ENV"
+
+      - name: Install Rust stable (Android targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./desktop/src-tauri -> target"
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Initialize Android project
+        working-directory: desktop
+        run: npx tauri android init --ci
+
+      - name: Apply launcher icons
+        working-directory: desktop
+        run: cp -r src-tauri/icons/android/. src-tauri/gen/android/app/src/main/res/
+
+      - name: Configure Android signing
+        working-directory: desktop
+        env:
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          GEN=src-tauri/gen/android
+          KEYSTORE="$RUNNER_TEMP/android-release.jks"
+
+          if [ -n "${ANDROID_KEY_BASE64:-}" ]; then
+            echo "Using release keystore from secrets."
+            echo "$ANDROID_KEY_BASE64" | base64 -d > "$KEYSTORE"
+            ALIAS="${ANDROID_KEY_ALIAS:?ANDROID_KEY_ALIAS required when ANDROID_KEY_BASE64 is set}"
+            PASS="${ANDROID_KEY_PASSWORD:?ANDROID_KEY_PASSWORD required when ANDROID_KEY_BASE64 is set}"
+          else
+            echo "::warning::No ANDROID_KEY_BASE64 secret — signing with a CI-generated keystore (sideload OK; not for Play Store)."
+            ALIAS=upload
+            PASS=android
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE" \
+              -storepass "$PASS" -keypass "$PASS" \
+              -alias "$ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Zhiyuan Download,O=Kiteyuan,C=CN"
+          fi
+
+          cat > "$GEN/keystore.properties" <<EOF
+          password=$PASS
+          keyAlias=$ALIAS
+          storeFile=$KEYSTORE
+          EOF
+
+          # Strip leading spaces introduced by workflow indentation
+          sed -i 's/^[[:space:]]*//' "$GEN/keystore.properties"
+          cat "$GEN/keystore.properties"
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path("src-tauri/gen/android/app/build.gradle.kts")
+          text = path.read_text(encoding="utf-8")
+          if "signingConfigs" in text:
+              print("signingConfigs already present")
+              raise SystemExit(0)
+          if "import java.io.FileInputStream" not in text:
+              text = text.replace(
+                  "import java.util.Properties\n",
+                  "import java.io.FileInputStream\nimport java.util.Properties\n",
+                  1,
+              )
+          signing = '''
+          signingConfigs {
+              create("release") {
+                  val keystorePropertiesFile = rootProject.file("keystore.properties")
+                  val keystoreProperties = Properties()
+                  if (keystorePropertiesFile.exists()) {
+                      keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+                  }
+                  keyAlias = keystoreProperties["keyAlias"] as String
+                  keyPassword = keystoreProperties["password"] as String
+                  storeFile = file(keystoreProperties["storeFile"] as String)
+                  storePassword = keystoreProperties["password"] as String
+              }
+          }
+          '''
+          needle = "    buildTypes {"
+          if needle not in text:
+              raise SystemExit("buildTypes block not found in build.gradle.kts")
+          text = text.replace(needle, signing + "\n" + needle, 1)
+          release_block = '''    getByName("release") {
+                  signingConfig = signingConfigs.getByName("release")
+                  isMinifyEnabled = true'''
+          old_release = '''    getByName("release") {
+                  isMinifyEnabled = true'''
+          if old_release not in text:
+              raise SystemExit("release buildType block not found")
+          text = text.replace(old_release, release_block, 1)
+          path.write_text(text, encoding="utf-8")
+          print("Patched build.gradle.kts with release signingConfig")
+          PY
+
+      - name: Build and upload Android APK
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NDK_HOME: ${{ env.NDK_HOME }}
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+        with:
+          projectPath: desktop
+          mobile: android
+          # 主流手机架构；需要更小体积可改成 --split-per-abi
+          args: --apk --target aarch64
+          tagName: v__VERSION__
+          releaseName: "纸鸢下载 v__VERSION__"
+          releaseBody: |
+            纸鸢下载客户端（WebView 壳）。
+
+            启动后加载：https://mybt.kiteyuan.info
+
+            ## 安装包说明
+            - **Windows**：`.msi` / `.exe`（NSIS）
+            - **macOS**：`.dmg`（Apple Silicon 与 Intel 分别构建）
+            - **Linux**：`.deb` / `.AppImage`
+            - **Android**：`.apk`（aarch64；侧载安装，未上架应用商店）
+
+            > macOS 未公证时，首次打开可能需在「系统设置 → 隐私与安全性」中允许。
+          releaseDraft: false
+          prerelease: false

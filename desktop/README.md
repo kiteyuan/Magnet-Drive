@@ -53,6 +53,7 @@ npm run build
 | Windows | `msi/`（需 `bundle.windows.wix.language: zh-CN`）、`nsis/` |
 | macOS | `dmg/`、`macos/` |
 | Linux | `deb/`、`appimage/` |
+| Android | CI 产出 `.apk`（见下方发版说明） |
 
 仅打 NSIS：`npx tauri build --bundles nsis`
 
@@ -80,14 +81,33 @@ npm run build
 | `ubuntu-22.04` | Linux x64（deb / AppImage 等） |
 | `macos-latest` + `aarch64-apple-darwin` | Apple Silicon |
 | `macos-latest` + `x86_64-apple-darwin` | Intel Mac |
+| `ubuntu-22.04` + `mobile: android` | Android APK（aarch64） |
 
-构建成功后会创建一个 **draft Release**（名称形如「纸鸢下载 v0.1.0」），安装包作为 assets 上传。确认无误后在 GitHub Releases 页面发布即可。
+构建成功后会直接创建 **正式 Release**（非草稿，名称形如「纸鸢下载 v0.1.0」），各平台安装包作为 assets 上传。
 
 > 仓库需允许 Actions 写权限：Settings → Actions → General → Workflow permissions → **Read and write permissions**。
 
+### Android 说明
+
+- CI 中执行 `tauri android init`，不提交 `gen/android`。
+- 默认打 `aarch64` APK，便于主流手机侧载。
+- **正式签名（推荐）**：在仓库 Secrets 配置：
+  - `ANDROID_KEY_BASE64`：keystore 的 base64（`base64 -i upload-keystore.jks`）
+  - `ANDROID_KEY_ALIAS`
+  - `ANDROID_KEY_PASSWORD`
+- 未配置 Secrets 时，CI 会用临时 keystore 签名（可安装，但不适合上架 / 长期升级链）。
+
+本地若要开发 Android，需先安装 Android SDK/NDK，并设置 `ANDROID_HOME`、`NDK_HOME`，再执行：
+
+```bash
+cd desktop
+npm run tauri android init
+npm run tauri android dev
+```
+
 ### 签名 / 公证（可选，未默认启用）
 
-工作流里已用注释标出 Apple 公证与 Tauri updater 签名相关环境变量。需要上架或减少「未知开发者」提示时，再配置对应 Secrets 并取消注释。当前交付以未签名构建为主。
+工作流里已用注释标出 Apple 公证与 Tauri updater 签名相关环境变量。需要减少「未知开发者」提示时，再配置对应 Secrets 并取消注释。
 
 ## 项目结构
 
@@ -110,22 +130,8 @@ desktop/
 - `app.security.csp` = `null`（避免干扰线上站点）
 - `capabilities/default.json` 的 `remote.urls` 允许 `*.kiteyuan.info`
 
-## Android（可选扩展）
-
-桌面三端优先；Android 不阻塞交付。若要扩展移动端：
-
-```bash
-cd desktop
-npm run tauri android init
-npm run tauri android dev
-# 或
-npm run tauri android build
-```
-
-需另行安装 Android SDK / NDK，并在 CI 中增加 Android job（当前 workflow 未包含）。
-
 ## 明确不做
 
 - 不是 Electron
 - 不把整站离线打进安装包（仅在线加载）
-- 不在首版做应用商店上架与复杂公证
+- 不在首版做应用商店上架与复杂公证（Android / macOS 均可后续补签名）
