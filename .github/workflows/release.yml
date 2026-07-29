@@ -189,44 +189,59 @@ jobs:
           cat "$GEN/keystore.properties"
           python3 <<'PY'
           from pathlib import Path
+          import re
+
           path = Path("src-tauri/gen/android/app/build.gradle.kts")
           text = path.read_text(encoding="utf-8")
-          if "signingConfigs" in text:
-              print("signingConfigs already present")
+          print("---- build.gradle.kts (head) ----")
+          print("\n".join(text.splitlines()[:80]))
+          print("---- end head ----")
+
+          if "signingConfig = signingConfigs.getByName(\"release\")" in text:
+              print("Release signingConfig already present")
               raise SystemExit(0)
+
           if "import java.io.FileInputStream" not in text:
+              if "import java.util.Properties" not in text:
+                  raise SystemExit("Expected Properties import missing")
               text = text.replace(
-                  "import java.util.Properties\n",
-                  "import java.io.FileInputStream\nimport java.util.Properties\n",
+                  "import java.util.Properties",
+                  "import java.io.FileInputStream\nimport java.util.Properties",
                   1,
               )
-          signing = '''
-          signingConfigs {
-              create("release") {
-                  val keystorePropertiesFile = rootProject.file("keystore.properties")
-                  val keystoreProperties = Properties()
-                  if (keystorePropertiesFile.exists()) {
-                      keystoreProperties.load(FileInputStream(keystorePropertiesFile))
-                  }
-                  keyAlias = keystoreProperties["keyAlias"] as String
-                  keyPassword = keystoreProperties["password"] as String
-                  storeFile = file(keystoreProperties["storeFile"] as String)
-                  storePassword = keystoreProperties["password"] as String
-              }
-          }
-          '''
-          needle = "    buildTypes {"
-          if needle not in text:
-              raise SystemExit("buildTypes block not found in build.gradle.kts")
-          text = text.replace(needle, signing + "\n" + needle, 1)
-          release_block = '''    getByName("release") {
-                  signingConfig = signingConfigs.getByName("release")
-                  isMinifyEnabled = true'''
-          old_release = '''    getByName("release") {
-                  isMinifyEnabled = true'''
-          if old_release not in text:
+
+          if "signingConfigs" not in text:
+              m = re.search(r"^([ \t]*)buildTypes\s*\{", text, re.M)
+              if not m:
+                  raise SystemExit("buildTypes block not found in build.gradle.kts")
+              ind = m.group(1)
+              signing = (
+                  f"{ind}signingConfigs {{\n"
+                  f"{ind}    create(\"release\") {{\n"
+                  f"{ind}        val keystorePropertiesFile = rootProject.file(\"keystore.properties\")\n"
+                  f"{ind}        val keystoreProperties = Properties()\n"
+                  f"{ind}        if (keystorePropertiesFile.exists()) {{\n"
+                  f"{ind}            keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n"
+                  f"{ind}        }}\n"
+                  f"{ind}        keyAlias = keystoreProperties[\"keyAlias\"] as String\n"
+                  f"{ind}        keyPassword = keystoreProperties[\"password\"] as String\n"
+                  f"{ind}        storeFile = file(keystoreProperties[\"storeFile\"] as String)\n"
+                  f"{ind}        storePassword = keystoreProperties[\"password\"] as String\n"
+                  f"{ind}    }}\n"
+                  f"{ind}}}\n"
+              )
+              text = text[: m.start()] + signing + text[m.start() :]
+
+          m = re.search(r'getByName\("release"\)\s*\{', text)
+          if not m:
               raise SystemExit("release buildType block not found")
-          text = text.replace(old_release, release_block, 1)
+          after = text[m.end() :]
+          next_line = after.lstrip("\n").split("\n", 1)[0]
+          ind_match = re.match(r"[ \t]*", next_line)
+          ind = ind_match.group(0) if ind_match else "        "
+          injection = f"\n{ind}signingConfig = signingConfigs.getByName(\"release\")"
+          text = text[: m.end()] + injection + text[m.end() :]
+
           path.write_text(text, encoding="utf-8")
           print("Patched build.gradle.kts with release signingConfig")
           PY
