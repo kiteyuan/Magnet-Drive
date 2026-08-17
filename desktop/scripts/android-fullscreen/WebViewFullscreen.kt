@@ -40,6 +40,11 @@ object WebViewFullscreen {
         originalOrientation = activity.requestedOrientation
         isShowing = true
 
+        // Lock to landscape (either side). SENSOR follows the phone and stays
+        // portrait if the user never rotates, which is not how video fullscreen works.
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         view.setBackgroundColor(Color.BLACK)
         val decor = activity.window.decorView as FrameLayout
         decor.addView(
@@ -51,8 +56,6 @@ object WebViewFullscreen {
         )
 
         hideSystemBars(activity)
-        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
-        activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     @JvmStatic
