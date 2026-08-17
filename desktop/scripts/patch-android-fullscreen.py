@@ -81,6 +81,7 @@ class MainActivity : TauriActivity() {{
   }}
 
   override fun onWebViewCreate(webView: WebView) {{
+    WebViewFullscreen.attach(webView)
     onBackPressedDispatcher.addCallback(
       this,
       object : OnBackPressedCallback(true) {{
