@@ -90,6 +90,7 @@ npm run build
 ### Android 说明
 
 - CI 中执行 `tauri android init`，不提交 `gen/android`。
+- 初始化后会打补丁，让 Android WebView 支持 HTML5 视频全屏（Wry 默认会拒绝 `onShowCustomView`）。
 - 默认打 `aarch64` APK，便于主流手机侧载。
 - **正式签名（推荐）**：在仓库 Secrets 配置：
   - `ANDROID_KEY_BASE64`：keystore 的 base64（`base64 -i upload-keystore.jks`）
@@ -102,6 +103,7 @@ npm run build
 ```bash
 cd desktop
 npm run tauri android init
+npm run android:patch-fullscreen
 npm run tauri android dev
 ```
 
@@ -115,6 +117,7 @@ npm run tauri android dev
 desktop/
   package.json              # npm 脚本与 @tauri-apps/cli
   app-icon.png              # 图标源（由仓库根目录 favicon.ico 生成）
+  scripts/                  # Android 全屏补丁（init 之后、每次 rustBuild 再打一次）
   src/index.html            # 本地占位页（正式运行不使用）
   src-tauri/
     tauri.conf.json         # 窗口、远程 URL、打包配置

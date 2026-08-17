@@ -150,6 +150,10 @@ jobs:
         working-directory: desktop
         run: cp -r src-tauri/icons/android/. src-tauri/gen/android/app/src/main/res/
 
+      - name: Enable WebView HTML5 video fullscreen
+        working-directory: desktop
+        run: python3 scripts/patch-android-fullscreen.py
+
       - name: Configure Android signing
         working-directory: desktop
         env:
