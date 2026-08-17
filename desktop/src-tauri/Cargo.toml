@@ -1,6 +1,6 @@
 [package]
 name = "zhiyuan-download"
-version = "0.1.5"
+version = "0.1.6"
 description = "纸鸢下载桌面客户端（WebView 壳）"
 authors = ["kiteyuan"]
 edition = "2021"

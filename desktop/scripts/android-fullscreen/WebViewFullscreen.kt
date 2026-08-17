@@ -13,8 +13,6 @@ import android.widget.FrameLayout
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.webkit.WebViewCompat
-import androidx.webkit.WebViewFeature
 
 /**
  * Video-player fullscreen only: overlay the WebView's custom video view in
@@ -31,12 +29,10 @@ object WebViewFullscreen {
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var originalOrientation: Int = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-    private var scriptInjected: Boolean = false
 
     @JvmStatic
     fun attach(view: WebView) {
         webView = view
-        injectPreferVideoFullscreen(view)
     }
 
     @JvmStatic
@@ -109,21 +105,6 @@ object WebViewFullscreen {
         isShowing = false
     }
 
-    private fun injectPreferVideoFullscreen(webView: WebView) {
-        if (scriptInjected) {
-            return
-        }
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_JAVASCRIPT)) {
-            return
-        }
-        WebViewCompat.addDocumentStartJavaScript(
-            webView,
-            PREFER_VIDEO_FULLSCREEN_JS,
-            setOf("*"),
-        )
-        scriptInjected = true
-    }
-
     private fun hideSystemBars(activity: Activity) {
         WindowCompat.setDecorFitsSystemWindows(activity.window, false)
         val controller = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
@@ -143,48 +124,4 @@ object WebViewFullscreen {
         controller.show(WindowInsetsCompat.Type.systemBars())
         WindowCompat.setDecorFitsSystemWindows(activity.window, false)
     }
-
-    // If the page fullscreens <html>/<body>, Android shows the whole app UI.
-    // Redirect that to the <video> (or its player root) instead.
-    private const val PREFER_VIDEO_FULLSCREEN_JS = """
-(function () {
-  function isPageRoot(el) {
-    return !el || el === document.documentElement || el === document.body ||
-      el.tagName === 'HTML' || el.tagName === 'BODY';
-  }
-  function playerTarget(el) {
-    if (isPageRoot(el)) {
-      return document.querySelector('video') || el;
-    }
-    if (el && el.tagName === 'VIDEO') {
-      return el.closest('.art-video-player, .artplayer, .dplayer, .xgplayer, .video-js') || el;
-    }
-    if (el && el.querySelector) {
-      var video = el.querySelector('video');
-      if (video) {
-        var page = document.documentElement;
-        var er = el.getBoundingClientRect();
-        if (page && er.width >= page.clientWidth * 0.95 && er.height >= page.clientHeight * 0.95) {
-          return video.closest('.art-video-player, .artplayer, .dplayer, .xgplayer, .video-js') || video;
-        }
-      }
-    }
-    return el;
-  }
-  function wrap(proto, name) {
-    var orig = proto[name];
-    if (typeof orig !== 'function') return;
-    proto[name] = function () {
-      var target = playerTarget(this);
-      if (target && target !== this && typeof target[name] === 'function') {
-        return target[name].apply(target, arguments);
-      }
-      return orig.apply(this, arguments);
-    };
-  }
-  wrap(Element.prototype, 'requestFullscreen');
-  wrap(Element.prototype, 'webkitRequestFullscreen');
-  wrap(Element.prototype, 'webkitRequestFullScreen');
-})();
-"""
 }
